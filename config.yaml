@@ -1,0 +1,11 @@
+weights:
+  elo: 400
+  recruiting: 120
+  transfers: 80
+  returning_production: 90
+  last3y_record: 60
+  stats: 100
+  trend: 75
+  sp_plus: 140   # ESPN SP+ influence
+hfa: 55
+elo_k: 20
