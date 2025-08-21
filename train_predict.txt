@@ -1,0 +1,78 @@
+# train_predict.py (verbose)
+# Reads data/features_with_sp.csv -> writes data/rankings.csv
+import os
+from pathlib import Path
+import pandas as pd
+import yaml
+import traceback
+
+def main():
+    try:
+        cwd = os.getcwd()
+        print(f"[info] cwd = {cwd}")
+
+        features_path = Path("data/features_with_sp.csv")
+        out_path = Path("data/rankings.csv")
+        config_path = Path("config.yaml")
+
+        print(f"[info] expecting features at: {features_path.resolve()}")
+        if not features_path.exists():
+            print("[error] features_with_sp.csv not found.")
+            return
+
+        df = pd.read_csv(features_path)
+        print(f"[info] features shape = {df.shape}")
+        print(f"[info] features columns = {list(df.columns)}")
+        print(df.head(3).to_string(index=False))
+
+        # ensure required columns
+        if "team" not in df.columns:
+            print("[error] 'team' column missing in features_with_sp.csv")
+            return
+        if "season" not in df.columns:
+            # try to infer season from team_power if needed
+            tp = Path("data/team_power.csv")
+            if tp.exists():
+                tpdf = pd.read_csv(tp)
+                season = int(tpdf["season"].max())
+                df["season"] = season
+                print(f"[warn] 'season' missing; inferred season = {season}")
+            else:
+                print("[error] 'season' missing and data/team_power.csv not found to infer.")
+                return
+
+        # load weights
+        w_sp = 140.0
+        if config_path.exists():
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            w_sp = float((cfg.get("weights") or {}).get("sp_plus", w_sp))
+        print(f"[info] using sp_plus weight = {w_sp}")
+
+        # ensure SP+ contribution column
+        if "sp_plus_weighted" not in df.columns:
+            if "sp_ovr" in df.columns:
+                df["sp_plus_weighted"] = df["sp_ovr"].fillna(0.0) * w_sp
+                print("[warn] built sp_plus_weighted from sp_ovr * weight")
+            else:
+                print("[error] neither 'sp_plus_weighted' nor 'sp_ovr' found.")
+                return
+
+        # build total power (extend with other signals later)
+        df["power"] = 0.0
+        df["power"] += df["sp_plus_weighted"].fillna(0.0)
+
+        # rank within season
+        df["rank"] = df.groupby("season")["power"].rank(ascending=False, method="dense").astype(int)
+
+        out = df[["season", "rank", "team", "power"]].sort_values(["season", "rank"])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out.to_csv(out_path, index=False)
+        print(f"[success] wrote {out_path.resolve()} rows={len(out)}")
+
+    except Exception as e:
+        print("[fatal] exception occurred:")
+        traceback.print_exc()
+
+if __name__ == "__main__":
+    main()

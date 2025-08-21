@@ -1,0 +1,35 @@
+# write_rankings_from_sp.py
+# Minimal fallback: reads data/features_with_sp.csv and writes data/rankings.csv
+import pandas as pd
+from pathlib import Path
+
+features_path = Path("data/features_with_sp.csv")
+out_path = Path("data/rankings.csv")
+
+if not features_path.exists():
+    raise FileNotFoundError("data/features_with_sp.csv not found. Run run_all.py first.")
+
+df = pd.read_csv(features_path)
+
+# ensure the required columns exist
+if "team" not in df.columns:
+    raise ValueError("'team' column missing in features_with_sp.csv")
+if "season" not in df.columns:
+    # if season missing, assume current season from the file (try to infer a single value)
+    df["season"] = df.get("Season", df.get("year", 2025))
+
+# prefer sp_plus_weighted; if not present, fall back to sp_ovr * 140
+if "sp_plus_weighted" in df.columns:
+    power = df["sp_plus_weighted"].fillna(0.0)
+elif "sp_ovr" in df.columns:
+    power = df["sp_ovr"].fillna(0.0) * 140.0
+else:
+    raise ValueError("Need 'sp_plus_weighted' or 'sp_ovr' in features_with_sp.csv")
+
+df = df.assign(power=power)
+df["rank"] = df.groupby("season")["power"].rank(ascending=False, method="dense").astype(int)
+
+out = df[["season","rank","team","power"]].sort_values(["season","rank"])
+out_path.parent.mkdir(parents=True, exist_ok=True)
+out.to_csv(out_path, index=False)
+print(f"✅ Wrote {out_path.resolve()} rows={len(out)}")
