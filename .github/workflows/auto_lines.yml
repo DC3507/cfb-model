@@ -1,0 +1,89 @@
+name: Auto Lines → Picks
+
+on:
+  schedule:
+    # All times are UTC (8:00 AM ET = 13:00 UTC; 12:00 PM ET = 17:00 UTC)
+    - cron: "0 13 * * 1"   # Mondays  8:00 AM ET
+    - cron: "0 17 * * 3"   # Wednesdays 12:00 PM ET
+    - cron: "0 17 * * 4"   # Thursdays  12:00 PM ET
+  workflow_dispatch:
+
+jobs:
+  build-and-pick:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Your CFBD API Key comes from repo → Settings → Secrets → Actions
+      CFBD_API_KEY: ${{ secrets.CFBD_API_KEY }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # Optional but helpful: cache pip to speed up runs
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # --- Build the model data (SP+, roster, extended metrics) ---
+      - name: Build metrics → data/metrics_extended.csv
+        run: |
+          python fetch_metrics_extended.py
+
+      - name: Merge SP+ into features → data/features_with_sp.csv
+        run: |
+          python merge_sp_into_features.py
+
+      - name: Make rankings → data/rankings.csv
+        run: |
+          python make_rankings.py
+
+      # --- Pick the latest lines CSV and run the ATS picker ---
+      # We look for the newest CSV inside data/lines (recommended) first,
+      # and fall back to any 'lines_*.csv' at repo root if needed.
+      - name: Locate latest lines file
+        id: pick_lines
+        run: |
+          set -e
+          LINES_FILE=""
+          if compgen -G "data/lines/*.csv" >/dev/null; then
+            LINES_FILE="$(ls -t data/lines/*.csv | head -n 1)"
+          elif compgen -G "lines_*.csv" >/dev/null; then
+            LINES_FILE="$(ls -t lines_*.csv | head -n 1)"
+          fi
+
+          if [ -z "$LINES_FILE" ]; then
+            echo "No lines CSV found. Place weekly lines in data/lines/ (e.g., data/lines/lines_2025_wk3.csv)."
+            exit 1
+          fi
+
+          echo "Using lines file: $LINES_FILE"
+          echo "file=$LINES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Predict ATS → data/picks.csv
+        run: |
+          python predict_ats.py "${{ steps.pick_lines.outputs.file }}"
+
+      # --- Upload results so you can download from the Actions run ---
+      - name: Upload picks.csv
+        uses: actions/upload-artifact@v4
+        with:
+          name: picks
+          path: data/picks.csv
+          if-no-files-found: error
+
+      - name: Upload rankings.csv
+        uses: actions/upload-artifact@v4
+        with:
+          name: rankings
+          path: data/rankings.csv
+          if-no-files-found: error
